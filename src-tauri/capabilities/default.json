@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local desktop window; privileged work is restricted to explicit Rust commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
