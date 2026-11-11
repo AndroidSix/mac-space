@@ -1,7 +1,9 @@
 mod cleanup;
+mod local_api;
 mod menu;
 mod monitor;
 mod scanner;
+mod updates;
 
 use notify::{RecursiveMode, Watcher};
 use scanner::Snapshot;
@@ -42,6 +44,8 @@ struct AppState {
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     changed: Mutex<std::collections::HashSet<String>>,
     watching: AtomicBool,
+    paused: AtomicBool,
+    api: local_api::LocalApi,
 }
 
 impl AppState {
@@ -59,6 +63,7 @@ struct BusyGuard(Arc<AppState>);
 impl Drop for BusyGuard {
     fn drop(&mut self) {
         self.0.busy.store(false, Ordering::Release);
+        self.0.api.publish(&self.0);
     }
 }
 
@@ -68,6 +73,7 @@ fn acquire(state: &Arc<AppState>) -> Result<BusyGuard, String> {
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "scan_busy")?;
     state.cancel.store(false, Ordering::Relaxed);
+    state.api.publish(state);
     Ok(BusyGuard(state.clone()))
 }
 
@@ -91,13 +97,24 @@ async fn get_metrics(
         .is_some_and(|w| w.is_minimized().unwrap_or(false) || !w.is_visible().unwrap_or(true));
     tauri::async_runtime::spawn_blocking(move || {
         let mut monitor = state.monitor.lock().map_err(|_| "state_error")?;
-        if hidden && monitor.last.sampled_at != 0 {
+        if state.paused.load(Ordering::Relaxed) || hidden && monitor.last.sampled_at != 0 {
             return Ok(monitor.last.clone());
         }
-        Ok(monitor.sample())
+        let result = monitor.sample();
+        drop(monitor);
+        state.api.publish(&state);
+        Ok(result)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn set_sampling_paused(state: State<'_, Arc<AppState>>, paused: bool) {
+    let _monitor = state.monitor.lock().unwrap_or_else(|e| e.into_inner());
+    state.paused.store(paused, Ordering::Relaxed);
+    drop(_monitor);
+    state.api.publish(&state);
 }
 
 #[tauri::command]
@@ -352,6 +369,7 @@ fn watch_caches(app: &tauri::AppHandle, state: &Arc<AppState>) {
                     && (changed.len() != before || !state.dirty.load(Ordering::Relaxed))
                 {
                     state.dirty.store(true, Ordering::Relaxed);
+                    state.api.publish(&state);
                     let _ = handle.emit("cache-dirty", ());
                 }
             }
@@ -401,9 +419,21 @@ pub fn run() {
                 watcher: Mutex::new(None),
                 changed: Mutex::new(scanner::rules().iter().map(|r| r.id.to_string()).collect()),
                 watching: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
+                api: local_api::LocalApi::new(folder.join("local-api.json"))?,
             });
             watch_caches(app.handle(), &state);
-            app.manage(state);
+            app.manage(state.clone());
+            if state.api.config().enabled {
+                tauri::async_runtime::spawn(async move {
+                    if local_api::LocalApi::configure(state.clone(), true, false)
+                        .await
+                        .is_err()
+                    {
+                        let _ = local_api::LocalApi::configure(state, false, false).await;
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -418,7 +448,14 @@ pub fn run() {
             reveal_path,
             open_permissions,
             get_system_language,
-            set_ui_language
+            set_ui_language,
+            set_sampling_paused,
+            local_api::get_local_api,
+            local_api::set_local_api,
+            updates::has_update_token,
+            updates::save_update_token,
+            updates::check_update,
+            updates::open_releases
         ])
         .run(tauri::generate_context!())
         .expect("could not start MacSpace");

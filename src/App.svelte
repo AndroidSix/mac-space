@@ -34,6 +34,8 @@
   } from '@lucide/svelte';
   import { messages, type MessageKey } from './i18n';
   import SmartCleanup from './SmartCleanup.svelte';
+  import IntegrationSettings from './IntegrationSettings.svelte';
+  import { version } from '../package.json';
   import type {
     BatchReport,
     CleanupProgress,
@@ -86,6 +88,7 @@
   let cpuHistory = $state<number[]>([]);
   let lastIncremental = 0;
   let paused = $state(false);
+  let togglingSampling = $state(false);
   let focused = $state(document.hasFocus());
   let metrics = $state<Metrics | null>(null);
   let snapshot = $state<Snapshot>({ caches: [], cacheScannedAt: 0, directory: null, dirty: false });
@@ -196,6 +199,21 @@
       },
       metrics?.lowPower ? Math.max(10000, interval) : interval,
     );
+  }
+  async function toggleSampling() {
+    if (togglingSampling) return;
+    togglingSampling = true;
+    const next = !paused;
+    try {
+      await command('set_sampling_paused', { paused: next });
+      paused = next;
+      if (!paused) await refreshMetrics();
+      schedule();
+    } catch (error) {
+      showError(error);
+    } finally {
+      togglingSampling = false;
+    }
   }
   async function scan(mode: 'caches' | 'directory' | 'changed', root = scanRoot) {
     if (busy) return false;
@@ -475,7 +493,7 @@
         <Leaf size={16} /><span>{t(metrics?.lowPower ? 'lowPower' : 'normalPower')}</span>
       </div>
       <button class:active={page === 'settings'} onclick={() => (page = 'settings')}
-        ><Settings2 size={18} /><span>{t('settings')}</span><small>0.2.0</small></button
+        ><Settings2 size={18} /><span>{t('settings')}</span><small>{version}</small></button
       >
       <div class="local-note"><ShieldCheck size={13} /><span>{t('localOnly')}</span></div>
     </div>
@@ -485,10 +503,16 @@
     <header class="topbar">
       <div class="breadcrumb">MACSPACE <ChevronRight size={13} /><span>{t(page)}</span></div>
       <div class="header-actions">
-        <span class="sampling-state"
+        <button
+          class="sampling-state"
+          onclick={toggleSampling}
+          disabled={!native || togglingSampling}
+          title={t(paused ? 'resume' : 'pause')}
+          aria-label={t(paused ? 'resume' : 'pause')}
+          aria-pressed={!paused}
           ><i class:muted={!focused || paused}></i>{t(
             paused ? 'paused' : focused ? 'live' : 'focusPaused',
-          )}</span
+          )}{#if paused}<Play size={12} />{:else}<Pause size={12} />{/if}</button
         ><label class="language-picker"
           ><Languages size={16} /><select aria-label={t('language')} bind:value={language}
             ><option value="system">{t('system')}</option><option value="zh">中文</option><option
@@ -523,10 +547,8 @@
             >
           </div>{:else if page === 'monitor'}<button
             class="secondary"
-            onclick={() => {
-              paused = !paused;
-              if (!paused) void refreshMetrics();
-            }}
+            disabled={!native || togglingSampling}
+            onclick={toggleSampling}
             >{#if paused}<Play size={15} />{:else}<Pause size={15} />{/if}{t(
               paused ? 'resume' : 'pause',
             )}</button
@@ -1002,6 +1024,7 @@
             >
           </div>
         </section>
+        <IntegrationSettings {t} {native} />
         <section class="privacy-note">
           <ShieldCheck size={24} />
           <div>
@@ -1010,7 +1033,7 @@
           </div>
         </section>
         <div class="about-line">
-          <span>{t('version')} 0.2.0</span><span>{t('buildTech')}</span><span
+          <span>{t('version')} {version}</span><span>{t('buildTech')}</span><span
             >{metrics?.chip ?? 'Apple Silicon'} · {metrics?.os ?? 'macOS'}</span
           >
         </div>

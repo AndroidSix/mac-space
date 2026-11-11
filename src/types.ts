@@ -62,6 +62,18 @@ export interface Progress {
   errors: number;
 }
 export type Language = 'system' | 'zh' | 'en';
+export interface ApiConfig {
+  enabled: boolean;
+  port: number;
+  token: string;
+}
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  url: string;
+  checkedAt: number;
+}
 export interface CleanupProgress {
   id: string;
   completed: number;
