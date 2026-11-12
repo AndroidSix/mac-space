@@ -63,7 +63,9 @@
       bind:value={selected}
       disabled={!native || working || !status?.modes.length}
     >
-      {#if !status?.modes.length}<option value="">{t('power_unavailable')}</option>{/if}
+      {#if !status?.modes.length}<option value=""
+          >{t(status ? 'power_unavailable' : 'working')}</option
+        >{/if}
       {#each status?.modes ?? [] as mode}<option value={mode.id}>{t(mode.name)}</option>{/each}
     </select>
     <button
@@ -75,6 +77,8 @@
       )}</button
     >
   </div>
-  <p class="small-note">{t(status?.requiresAdmin ? 'powerMacNote' : 'powerWindowsNote')}</p>
+  {#if status?.modes.length}<p class="small-note">
+      {t(status.requiresAdmin ? 'powerMacNote' : 'powerWindowsNote')}
+    </p>{/if}
   <p class="power-feedback" class:error-text={failed} role="status">{message}</p>
 </section>

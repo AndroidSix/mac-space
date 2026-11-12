@@ -338,4 +338,37 @@ mod tests {
             std::panic::resume_unwind(error);
         }
     }
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_control_only_changes_test_child() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "ping", "-n", "20", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let metrics = Monitor::new().sample();
+            let process = metrics
+                .processes
+                .iter()
+                .find(|p| p.pid == child.id())
+                .unwrap();
+            assert_eq!(
+                process_action(child.id(), process.start_time + 1, "lower"),
+                Err("process_changed".into())
+            );
+            process_action(child.id(), process.start_time, "lower").unwrap();
+            assert!(crate::windows::process_priority(child.id()) >= 10);
+            assert_eq!(
+                process_action(child.id(), process.start_time, "terminate"),
+                Err("process_no_window".into())
+            );
+            assert!(child.try_wait().unwrap().is_none());
+        }));
+        let _ = child.kill();
+        let _ = child.wait();
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
+    }
 }

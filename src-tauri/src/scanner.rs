@@ -523,9 +523,10 @@ pub fn scan_directory(
     })
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
     #[test]
     fn scan_does_not_follow_symlinks_and_counts_hardlinks_once() {
         let root = std::env::temp_dir().join(format!("macspace-scan-test-{}", std::process::id()));
@@ -537,6 +538,30 @@ mod tests {
         let result = scan_directory(root.clone(), None, &AtomicBool::new(false), false).unwrap();
         assert_eq!(result.files, 2);
         assert!(result.entries.iter().map(|e| e.bytes).sum::<u64>() < 32768);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
+    fn scan_skips_junctions_and_counts_hardlinks_once() {
+        let root = std::env::temp_dir().join(format!("systembalance-scan-{}", std::process::id()));
+        fs::create_dir_all(root.join("cache")).unwrap();
+        fs::create_dir_all(root.join("outside")).unwrap();
+        fs::write(root.join("outside/keep"), vec![1_u8; 65536]).unwrap();
+        fs::write(root.join("cache/original"), vec![1_u8; 16384]).unwrap();
+        fs::hard_link(root.join("cache/original"), root.join("cache/duplicate")).unwrap();
+        let result = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(root.join("cache/link"))
+            .arg(root.join("outside"))
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let scan =
+            scan_directory(root.join("cache"), None, &AtomicBool::new(false), false).unwrap();
+        assert_eq!(scan.files, 1);
+        assert_eq!(scan.skipped_mounts, 1);
+        assert_eq!(scan.errors, 0);
+        assert!(scan.entries.iter().map(|e| e.bytes).sum::<u64>() < 32768);
         fs::remove_dir_all(root).unwrap();
     }
 }
