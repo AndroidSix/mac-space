@@ -8,16 +8,19 @@ pub fn localize(app: &AppHandle, language: &str) -> tauri::Result<()> {
     let label = |chinese, english| if zh { chinese } else { english };
     let app_menu = Submenu::with_items(
         app,
-        "MacSpace",
+        "System Balance",
         true,
         &[
-            &Item::about(app, Some(label("关于清衡", "About MacSpace")), None)?,
+            &Item::about(app, Some(label("关于清衡", "About System Balance")), None)?,
             &Item::separator(app)?,
-            &Item::hide(app, Some(label("隐藏清衡", "Hide MacSpace")))?,
+            #[cfg(target_os = "macos")]
+            &Item::hide(app, Some(label("隐藏清衡", "Hide System Balance")))?,
+            #[cfg(target_os = "macos")]
             &Item::hide_others(app, Some(label("隐藏其他应用", "Hide Others")))?,
+            #[cfg(target_os = "macos")]
             &Item::show_all(app, Some(label("显示全部", "Show All")))?,
             &Item::separator(app)?,
-            &Item::quit(app, Some(label("退出清衡", "Quit MacSpace")))?,
+            &Item::quit(app, Some(label("退出清衡", "Quit System Balance")))?,
         ],
     )?;
     let edit = Submenu::with_items(
@@ -46,7 +49,7 @@ pub fn localize(app: &AppHandle, language: &str) -> tauri::Result<()> {
     )?;
     app.set_menu(Menu::with_items(app, &[&app_menu, &edit, &window])?)?;
     if let Some(window) = app.get_webview_window("main") {
-        window.set_title(label("清衡 · MacSpace", "MacSpace"))?;
+        window.set_title(label("清衡 · System Balance", "System Balance"))?;
     }
     Ok(())
 }

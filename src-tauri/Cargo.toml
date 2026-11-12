@@ -1,11 +1,11 @@
 [package]
-name = "mac-space"
-version = "0.3.0"
+name = "system-balance"
+version = "0.4.0"
 edition = "2024"
-description = "A local-first macOS disk and workload manager"
+description = "A local-first disk, workload and power manager"
 
 [lib]
-name = "mac_space_lib"
+name = "system_balance_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -25,6 +25,7 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["net", "sync", "time", "macros"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 semver = "1"
+getrandom = "0.3"
 
 [profile.release]
 strip = true
@@ -33,3 +34,7 @@ codegen-units = 8
 
 [profile.dev]
 debug = 0
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Memory", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
+

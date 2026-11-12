@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
@@ -17,6 +16,71 @@ pub struct Rule {
     pub blockers: &'static [&'static str],
 }
 
+impl Rule {
+    pub fn path(&self) -> PathBuf {
+        #[cfg(windows)]
+        {
+            return std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| crate::home().join("AppData/Local"))
+                .join(self.relative);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            crate::home().join(self.relative)
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn rules() -> Vec<Rule> {
+    vec![
+        Rule {
+            id: "pip",
+            relative: "pip/Cache",
+            group: "packages",
+            blockers: &["pip", "pip3", "python", "python3"],
+        },
+        Rule {
+            id: "npm",
+            relative: "npm-cache/_cacache",
+            group: "packages",
+            blockers: &["node", "npm", "pnpm", "yarn"],
+        },
+        Rule {
+            id: "go",
+            relative: "go-build",
+            group: "development",
+            blockers: &["go", "compile"],
+        },
+        Rule {
+            id: "chrome",
+            relative: "Google/Chrome/User Data/Default/Cache",
+            group: "browser",
+            blockers: &["chrome"],
+        },
+        Rule {
+            id: "edge",
+            relative: "Microsoft/Edge/User Data/Default/Cache",
+            group: "browser",
+            blockers: &["msedge"],
+        },
+        Rule {
+            id: "electron",
+            relative: "electron/Cache",
+            group: "packages",
+            blockers: &["node", "electron", "npm", "pnpm", "yarn"],
+        },
+        Rule {
+            id: "electron-builder",
+            relative: "electron-builder/Cache",
+            group: "packages",
+            blockers: &["node", "electron-builder", "npm", "pnpm", "yarn"],
+        },
+    ]
+}
+
+#[cfg(target_os = "macos")]
 pub fn rules() -> Vec<Rule> {
     vec![
         Rule {
@@ -138,6 +202,55 @@ pub struct Progress {
     pub errors: u64,
 }
 
+struct FileMetadata {
+    directory: bool,
+    device: u64,
+    inode: u64,
+    links: u64,
+    bytes: u64,
+}
+fn file_metadata(path: &Path) -> std::io::Result<FileMetadata> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = fs::symlink_metadata(path)?;
+        Ok(FileMetadata {
+            directory: m.is_dir() && !m.file_type().is_symlink(),
+            device: m.dev(),
+            inode: m.ino(),
+            links: m.nlink(),
+            bytes: m.blocks().saturating_mul(512),
+        })
+    }
+    #[cfg(windows)]
+    {
+        let file = crate::windows::open_file(path, false, false)?;
+        let m = crate::windows::file_info(&file)?;
+        if m.dwFileAttributes
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+        {
+            return Ok(FileMetadata {
+                directory: false,
+                device: 0,
+                inode: 0,
+                links: 1,
+                bytes: 0,
+            });
+        }
+        let (device, inode) = crate::windows::identity(&m);
+        Ok(FileMetadata {
+            directory: m.dwFileAttributes
+                & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY
+                != 0,
+            device,
+            inode,
+            links: m.nNumberOfLinks as u64,
+            bytes: crate::windows::allocated(&file)?,
+        })
+    }
+}
+
 struct Walker<'a> {
     cancel: &'a AtomicBool,
     app: Option<&'a tauri::AppHandle>,
@@ -181,28 +294,28 @@ impl<'a> Walker<'a> {
             if self.cancel.load(Ordering::Relaxed) {
                 break;
             }
-            let metadata = match fs::symlink_metadata(&path) {
+            let metadata = match file_metadata(&path) {
                 Ok(value) => value,
                 Err(_) => {
                     self.error(&path);
                     continue;
                 }
             };
-            if metadata.dev() != device {
+            if metadata.device != device {
                 self.mounts += 1;
                 continue;
             }
-            if !metadata.is_dir()
-                && metadata.nlink() > 1
-                && !self.seen.insert((metadata.dev(), metadata.ino()))
+            if !metadata.directory
+                && metadata.links > 1
+                && !self.seen.insert((metadata.device, metadata.inode))
             {
                 continue;
             }
-            let bytes = metadata.blocks().saturating_mul(512);
+            let bytes = metadata.bytes;
             total = total.saturating_add(bytes);
             self.bytes = self.bytes.saturating_add(bytes);
             self.files += 1;
-            if metadata.is_dir() {
+            if metadata.directory {
                 match fs::read_dir(&path) {
                     Ok(children) => {
                         for child in children {
@@ -239,6 +352,7 @@ impl<'a> Walker<'a> {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub fn process_names() -> Vec<String> {
     let mut names: Vec<String> = std::process::Command::new("/bin/ps")
         .args(["-axo", "comm="])
@@ -277,6 +391,31 @@ pub fn process_names() -> Vec<String> {
     names
 }
 
+#[cfg(windows)]
+pub fn process_names() -> Vec<String> {
+    let system =
+        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing().with_processes(
+            sysinfo::ProcessRefreshKind::nothing().with_cmd(sysinfo::UpdateKind::Always),
+        ));
+    if system.processes().is_empty() {
+        return vec!["unknown".into()];
+    }
+    system
+        .processes()
+        .values()
+        .flat_map(|p| {
+            std::iter::once(p.name()).chain(p.cmd().iter().take(4).map(|v| v.as_os_str()))
+        })
+        .map(|value| {
+            Path::new(value)
+                .file_stem()
+                .unwrap_or(value)
+                .to_string_lossy()
+                .to_lowercase()
+        })
+        .collect()
+}
+
 pub fn blockers(rule: &Rule) -> Vec<String> {
     process_names()
         .into_iter()
@@ -303,15 +442,15 @@ pub fn scan_caches(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let path = crate::home().join(rule.relative);
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
+        let path = rule.path();
+        let Ok(metadata) = file_metadata(&path) else {
             continue;
         };
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !metadata.directory {
             continue;
         }
         let mut walker = Walker::new(cancel, app, economy);
-        let bytes = walker.walk(&path, metadata.dev());
+        let bytes = walker.walk(&path, metadata.device);
         if cancel.load(Ordering::Relaxed) {
             break;
         }
@@ -324,8 +463,8 @@ pub fn scan_caches(
             files: walker.files,
             errors: walker.errors,
             blocked: blockers(&rule),
-            device: metadata.dev(),
-            inode: metadata.ino(),
+            device: metadata.device,
+            inode: metadata.inode,
             is_directory: true,
         });
     }
@@ -339,8 +478,8 @@ pub fn scan_directory(
     cancel: &AtomicBool,
     economy: bool,
 ) -> Result<DirectoryScan, String> {
-    let metadata = fs::symlink_metadata(&root).map_err(|e| format!("scan_failed: {e}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    let metadata = file_metadata(&root).map_err(|e| format!("scan_failed: {e}"))?;
+    if !metadata.directory {
         return Err("invalid_directory".into());
     }
     let mut walker = Walker::new(cancel, app, economy);
@@ -360,14 +499,14 @@ pub fn scan_directory(
         let path = child.path();
         let before_errors = walker.errors;
         let before_files = walker.files;
-        let bytes = walker.walk(&path, metadata.dev());
+        let bytes = walker.walk(&path, metadata.device);
         entries.push(Entry {
             name: child.file_name().to_string_lossy().into_owned(),
             path: path.to_string_lossy().into_owned(),
             bytes,
             files: walker.files - before_files,
             errors: walker.errors - before_errors,
-            is_directory: fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()),
+            is_directory: file_metadata(&path).is_ok_and(|m| m.directory),
             ..Entry::default()
         });
     }
@@ -384,7 +523,7 @@ pub fn scan_directory(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     #[test]

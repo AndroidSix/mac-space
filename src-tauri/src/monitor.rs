@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::{collections::HashSet, time::Instant};
 use sysinfo::{Components, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn macspace_thermal_state() -> i32;
     fn macspace_low_power_mode() -> i32;
@@ -24,6 +25,7 @@ pub struct ProcessInfo {
     pub start_time: u64,
     pub manageable: bool,
     pub nice: i32,
+    pub lowered: bool,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -45,6 +47,8 @@ pub struct Metrics {
     pub sampled_at: u64,
     pub chip: String,
     pub os: String,
+    pub platform: String,
+    pub power: crate::power::PowerStatus,
 }
 
 pub struct Monitor {
@@ -52,6 +56,7 @@ pub struct Monitor {
     components: Components,
     last_refresh: Instant,
     pub last: Metrics,
+    pub power: crate::power::PowerMonitor,
 }
 
 fn process_refresh() -> ProcessRefreshKind {
@@ -71,6 +76,7 @@ impl Monitor {
             components: Components::new_with_refreshed_list(),
             last_refresh: Instant::now() - std::time::Duration::from_secs(2),
             last: Metrics::default(),
+            power: crate::power::PowerMonitor::new(),
         }
     }
 
@@ -91,18 +97,36 @@ impl Monitor {
             }
             current = self.system.process(pid).and_then(|p| p.parent());
         }
+        let own_id = self
+            .system
+            .process(Pid::from_u32(std::process::id()))
+            .and_then(|p| p.user_id())
+            .cloned();
         let mut processes: Vec<_> = self
             .system
             .processes()
             .iter()
             .map(|(pid, p)| {
-                let own = p
-                    .user_id()
-                    .is_some_and(|uid| **uid == unsafe { libc::getuid() });
+                let own = own_id.as_ref().is_some_and(|id| p.user_id() == Some(id));
                 let name = p.name().to_string_lossy().into_owned();
                 let manageable = own
                     && pid.as_u32() > 100
                     && !protected.contains(pid)
+                    && !matches!(
+                        name.to_ascii_lowercase().as_str(),
+                        "explorer.exe"
+                            | "dwm.exe"
+                            | "winlogon.exe"
+                            | "csrss.exe"
+                            | "services.exe"
+                            | "svchost.exe"
+                            | "lsass.exe"
+                            | "sihost.exe"
+                            | "taskhostw.exe"
+                            | "searchhost.exe"
+                            | "startmenuexperiencehost.exe"
+                            | "shellexperiencehost.exe"
+                    )
                     && !matches!(
                         name.as_str(),
                         "Finder"
@@ -123,7 +147,8 @@ impl Monitor {
                     memory: p.memory(),
                     start_time: p.start_time(),
                     manageable,
-                    nice: unsafe { libc::getpriority(libc::PRIO_PROCESS, pid.as_u32()) },
+                    nice: priority(pid.as_u32()),
+                    lowered: priority(pid.as_u32()) >= 10,
                 }
             })
             .collect();
@@ -152,8 +177,8 @@ impl Monitor {
             swap_used: self.system.used_swap(),
             disk_total,
             disk_available,
-            thermal_state: unsafe { macspace_thermal_state() },
-            low_power: unsafe { macspace_low_power_mode() != 0 },
+            thermal_state: thermal_state(),
+            low_power: low_power(),
             sensors,
             processes,
             process_count,
@@ -166,26 +191,65 @@ impl Monitor {
                 .map(|c| c.brand().to_string())
                 .unwrap_or_default(),
             os: System::long_os_version().unwrap_or_default(),
+            platform: std::env::consts::OS.into(),
+            power: self.power.status(false),
         };
         self.last_refresh = Instant::now();
         self.last.clone()
     }
 }
 
-pub fn disk_space(path: &std::path::Path) -> (u64, u64) {
-    use std::os::unix::ffi::OsStrExt;
-    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return (0, 0);
-    };
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
-        return (0, 0);
+fn thermal_state() -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { macspace_thermal_state() }
     }
-    let stat = unsafe { stat.assume_init() };
-    (
-        stat.f_blocks as u64 * stat.f_frsize,
-        stat.f_bavail as u64 * stat.f_frsize,
-    )
+    #[cfg(windows)]
+    {
+        -1
+    }
+}
+fn low_power() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { macspace_low_power_mode() != 0 }
+    }
+    #[cfg(windows)]
+    {
+        crate::windows::low_power()
+    }
+}
+fn priority(pid: u32) -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { libc::getpriority(libc::PRIO_PROCESS, pid) }
+    }
+    #[cfg(windows)]
+    {
+        crate::windows::process_priority(pid)
+    }
+}
+pub fn disk_space(path: &std::path::Path) -> (u64, u64) {
+    #[cfg(windows)]
+    {
+        crate::windows::disk_space(path)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return (0, 0);
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return (0, 0);
+        }
+        let stat = unsafe { stat.assume_init() };
+        (
+            stat.f_blocks as u64 * stat.f_frsize,
+            stat.f_bavail as u64 * stat.f_frsize,
+        )
+    }
 }
 
 pub fn process_action(pid: u32, start_time: u64, action: &str) -> Result<(), String> {
@@ -202,18 +266,25 @@ pub fn process_action(pid: u32, start_time: u64, action: &str) -> Result<(), Str
     if !process.manageable {
         return Err("process_protected".into());
     }
-    let result = match action {
-        "lower" => unsafe { libc::setpriority(libc::PRIO_PROCESS, pid, process.nice.max(10)) },
-        "terminate" => unsafe { libc::kill(pid as i32, libc::SIGTERM) },
-        _ => return Err("invalid_action".into()),
-    };
-    if result != 0 {
-        return Err(format!(
-            "permission_denied: {}",
-            std::io::Error::last_os_error()
-        ));
+    #[cfg(windows)]
+    {
+        crate::windows::process_action(pid, start_time, action)
     }
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        let result = match action {
+            "lower" => unsafe { libc::setpriority(libc::PRIO_PROCESS, pid, process.nice.max(10)) },
+            "terminate" => unsafe { libc::kill(pid as i32, libc::SIGTERM) },
+            _ => return Err("invalid_action".into()),
+        };
+        if result != 0 {
+            return Err(format!(
+                "permission_denied: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +308,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn process_control_checks_identity_and_handles_only_test_child() {
         let mut child = std::process::Command::new("/bin/sleep")

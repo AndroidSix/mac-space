@@ -1761,3 +1761,40 @@ dialog.smart-dialog {
 .segment-other {
   background: var(--faint);
 }
+
+.power-panel {
+  margin-bottom: 22px;
+}
+.power-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.power-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+.power-controls label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.power-controls select {
+  min-width: 200px;
+  max-width: 100%;
+}
+.power-feedback {
+  min-height: 20px;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.error-text {
+  color: #f29a91;
+}
+button.quiet-note {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}

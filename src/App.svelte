@@ -35,6 +35,7 @@
   import { messages, type MessageKey } from './i18n';
   import SmartCleanup from './SmartCleanup.svelte';
   import IntegrationSettings from './IntegrationSettings.svelte';
+  import PowerControl from './PowerControl.svelte';
   import { version } from '../package.json';
   import type {
     BatchReport,
@@ -463,13 +464,17 @@
   });
 </script>
 
-<svelte:head><title>{locale === 'zh' ? '清衡 · MacSpace' : 'MacSpace'}</title></svelte:head>
+<svelte:head
+  ><title>{locale === 'zh' ? '清衡 · System Balance' : 'System Balance'}</title></svelte:head
+>
 
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-icon"><HardDrive size={23} strokeWidth={1.8} /></div>
-      <div><strong>{locale === 'zh' ? '清衡' : 'MacSpace'}</strong><span>MACSPACE</span></div>
+      <div>
+        <strong>{locale === 'zh' ? '清衡' : 'System Balance'}</strong><span>SYSTEM BALANCE</span>
+      </div>
     </div>
     <p class="tagline">{t('tagline')}</p>
     <nav aria-label={locale === 'zh' ? '主导航' : 'Main navigation'}>
@@ -489,9 +494,16 @@
       {/each}
     </nav>
     <div class="sidebar-bottom">
-      <div class="quiet-note">
-        <Leaf size={16} /><span>{t(metrics?.lowPower ? 'lowPower' : 'normalPower')}</span>
-      </div>
+      <button class="quiet-note" onclick={() => (page = 'monitor')} title={t('powerControl')}>
+        <Leaf size={16} /><span
+          >{metrics?.power.current
+            ? t(
+                metrics.power.modes.find((mode) => mode.id === metrics?.power.current)?.name ??
+                  'powerMode',
+              )
+            : t('powerControl')}</span
+        >
+      </button>
       <button class:active={page === 'settings'} onclick={() => (page = 'settings')}
         ><Settings2 size={18} /><span>{t('settings')}</span><small>{version}</small></button
       >
@@ -501,7 +513,7 @@
 
   <main>
     <header class="topbar">
-      <div class="breadcrumb">MACSPACE <ChevronRight size={13} /><span>{t(page)}</span></div>
+      <div class="breadcrumb">SYSTEM BALANCE <ChevronRight size={13} /><span>{t(page)}</span></div>
       <div class="header-actions">
         <button
           class="sampling-state"
@@ -641,7 +653,7 @@
               <span class="eyebrow">STORAGE</span>
               <h2>{t('storage')}</h2>
             </div>
-            <span class="chip">Macintosh HD</span>
+            <span class="chip">{t('entireDisk')}</span>
           </div>
           <div class="storage-overview">
             <div class="storage-amount">
@@ -863,6 +875,14 @@
           <p>{t('scanDirectoryHint')}<br />{t('directoryNote')}<br />{t('noDeleteExplorer')}</p>
         </div>
       {:else if page === 'monitor'}
+        <PowerControl
+          status={metrics?.power}
+          {native}
+          {t}
+          onChanged={(power) => {
+            if (metrics) metrics = { ...metrics, power };
+          }}
+        />
         <div class="monitor-grid">
           <section class="panel thermal-panel">
             <div class="section-heading">
@@ -883,15 +903,23 @@
               </p>{/if}
           </section>
           <section class="panel load-panel">
-            <h2>{t('loadAverage')}</h2>
+            <h2>{t(metrics?.platform === 'windows' ? 'cpuCapacity' : 'loadAverage')}</h2>
             <div class="load-values">
               {#each [0, 1, 2] as index}<div>
-                  <strong>{metrics?.loadAverage[index].toFixed(2) ?? '—'}</strong><span
-                    >{[1, 5, 15][index]} min</span
+                  <strong
+                    >{metrics?.platform === 'windows'
+                      ? [metrics.cores, `${metrics.cpu.toFixed(1)}%`, metrics.processCount][index]
+                      : (metrics?.loadAverage[index].toFixed(2) ?? '—')}</strong
+                  ><span
+                    >{metrics?.platform === 'windows'
+                      ? t(['cores', 'cpu', 'process'][index])
+                      : `${[1, 5, 15][index]} min`}</span
                   >
                 </div>{/each}
             </div>
-            <p class="small-note">{t('loadNote')}</p>
+            <p class="small-note">
+              {t(metrics?.platform === 'windows' ? 'cpuCapacityNote' : 'loadNote')}
+            </p>
           </section>
         </div>
         <div class="process-toolbar">
@@ -923,9 +951,7 @@
                   ><td
                     ><div class="process-name">
                       <strong>{process.name}</strong><small
-                        >PID {process.pid}{process.nice >= 10
-                          ? ` · nice ${process.nice}`
-                          : ''}</small
+                        >PID {process.pid}{process.lowered ? ` · ${t('lowered')}` : ''}</small
                       >
                     </div></td
                   ><td class="mono">{process.cpu.toFixed(1)}%</td><td class="mono"
@@ -934,7 +960,7 @@
                     ><div class="row-actions">
                       <button
                         class="small-button"
-                        disabled={busy || !process.manageable || process.nice >= 10}
+                        disabled={busy || !process.manageable || process.lowered}
                         title={!process.manageable ? t('protected') : t('lowerBody')}
                         onclick={() =>
                           (confirmation = { kind: 'process', process, action: 'lower' })}
@@ -999,7 +1025,9 @@
               <h2><RefreshCw size={19} />{t('watching')}</h2>
               <p>{t('watchingHint')}</p>
             </div>
-            <span class="status-badge">{snapshot.watching ? 'FSEvents' : t('neverScanned')}</span>
+            <span class="status-badge"
+              >{snapshot.watching ? t('watchingActive') : t('neverScanned')}</span
+            >
           </div>
           <div class="setting-row">
             <div>
@@ -1034,7 +1062,7 @@
         </section>
         <div class="about-line">
           <span>{t('version')} {version}</span><span>{t('buildTech')}</span><span
-            >{metrics?.chip ?? 'Apple Silicon'} · {metrics?.os ?? 'macOS'}</span
+            >{metrics?.chip ?? '—'} · {metrics?.os ?? '—'}</span
           >
         </div>
       {/if}
@@ -1091,7 +1119,13 @@
       <p>
         {confirmation.kind === 'cache'
           ? t('cleanBody', { size: bytes(confirmation.entry.bytes) })
-          : t(confirmation.action === 'lower' ? 'lowerBody' : 'terminateBody')}
+          : t(
+              confirmation.action === 'lower'
+                ? 'lowerBody'
+                : metrics?.platform === 'windows'
+                  ? 'terminateWindows'
+                  : 'terminateBody',
+            )}
       </p>
       <code
         >{confirmation.kind === 'cache'

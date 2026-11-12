@@ -1,17 +1,18 @@
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::{
-    ffi::{CStr, CString},
-    time::Duration,
-};
+#[cfg(target_os = "macos")]
+use std::ffi::{CStr, CString};
+use std::time::Duration;
 
 const RELEASES: &str = "https://github.com/AndroidSix/mac-space/releases";
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn macspace_github_token_read() -> *mut libc::c_char;
     fn macspace_github_token_write(token: *const libc::c_char) -> i32;
 }
 
+#[cfg(target_os = "macos")]
 fn token() -> String {
     unsafe {
         let value = macspace_github_token_read();
@@ -22,6 +23,11 @@ fn token() -> String {
         libc::free(value.cast());
         result
     }
+}
+
+#[cfg(windows)]
+fn token() -> String {
+    crate::windows::read_token()
 }
 
 #[tauri::command]
@@ -37,11 +43,18 @@ pub async fn save_update_token(value: String) -> Result<(), String> {
         return Err("invalid_token".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let value = CString::new(value).map_err(|_| "invalid_token")?;
-        if unsafe { macspace_github_token_write(value.as_ptr()) } != 0 {
-            return Err("keychain_failed".into());
+        #[cfg(windows)]
+        {
+            return crate::windows::write_token(&value);
         }
-        Ok(())
+        #[cfg(target_os = "macos")]
+        {
+            let value = CString::new(value).map_err(|_| "invalid_token")?;
+            if unsafe { macspace_github_token_write(value.as_ptr()) } != 0 {
+                return Err("keychain_failed".into());
+            }
+            Ok(())
+        }
     })
     .await
     .map_err(|_| "keychain_failed".to_string())?
@@ -100,7 +113,7 @@ pub async fn check_update() -> Result<UpdateInfo, String> {
         .get("https://api.github.com/repos/AndroidSix/mac-space/releases/latest")
         .header(
             "User-Agent",
-            concat!("MacSpace/", env!("CARGO_PKG_VERSION")),
+            concat!("SystemBalance/", env!("CARGO_PKG_VERSION")),
         )
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28");
@@ -121,11 +134,7 @@ pub async fn check_update() -> Result<UpdateInfo, String> {
 
 #[tauri::command]
 pub fn open_releases() -> Result<(), String> {
-    std::process::Command::new("/usr/bin/open")
-        .arg(RELEASES)
-        .spawn()
-        .map(|_| ())
-        .map_err(|_| "update_failed".into())
+    crate::open_external(RELEASES)
 }
 
 #[cfg(test)]

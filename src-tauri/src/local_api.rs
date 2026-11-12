@@ -14,12 +14,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     convert::Infallible,
-    fs::OpenOptions,
-    io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
+};
+#[cfg(target_os = "macos")]
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
 };
 use tokio::sync::{Semaphore, watch};
 
@@ -49,14 +52,13 @@ pub struct LocalApi {
 
 fn random_token() -> Result<String, String> {
     let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .map_err(|_| "api_failed")?;
+    getrandom::fill(&mut bytes).map_err(|_| "api_failed")?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 impl LocalApi {
     pub fn new(path: PathBuf) -> Result<Self, String> {
+        #[cfg(target_os = "macos")]
         let existing = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -67,6 +69,16 @@ impl LocalApi {
                     .is_ok_and(|m| m.uid() == unsafe { libc::getuid() } && m.mode() & 0o077 == 0)
             })
             .and_then(|file| serde_json::from_reader::<_, ApiConfig>(file).ok())
+            .filter(|config| {
+                config.port == PORT
+                    && config.token.len() == 64
+                    && config.token.bytes().all(|b| b.is_ascii_hexdigit())
+            });
+        #[cfg(windows)]
+        let existing = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| crate::windows::protect(&bytes, false).ok())
+            .and_then(|bytes| serde_json::from_slice::<ApiConfig>(&bytes).ok())
             .filter(|config| {
                 config.port == PORT
                     && config.token.len() == 64
@@ -97,6 +109,29 @@ impl LocalApi {
             .clone()
     }
 
+    #[cfg(windows)]
+    fn save(&self, config: &ApiConfig) -> Result<(), String> {
+        let bytes = serde_json::to_vec(config).map_err(|_| "api_save_failed")?;
+        let encrypted = crate::windows::protect(&bytes, true).map_err(|_| "api_save_failed")?;
+        let temporary = self.path.with_extension(format!("{}.tmp", random_token()?));
+        use std::io::Write;
+        let result = (|| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(&encrypted)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temporary, &self.path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(temporary);
+        }
+        result.map_err(|_| "api_save_failed".into())
+    }
+
+    #[cfg(target_os = "macos")]
     fn save(&self, config: &ApiConfig) -> Result<(), String> {
         let temporary = self.path.with_extension("tmp");
         let mut file = OpenOptions::new()
@@ -491,6 +526,7 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(rotated.token, config.token);
+        #[cfg(target_os = "macos")]
         assert_eq!(
             std::fs::metadata(folder.join("local-api.json"))
                 .unwrap()

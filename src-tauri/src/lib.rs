@@ -2,8 +2,11 @@ mod cleanup;
 mod local_api;
 mod menu;
 mod monitor;
+mod power;
 mod scanner;
 mod updates;
+#[cfg(windows)]
+mod windows;
 
 use notify::{RecursiveMode, Watcher};
 use scanner::Snapshot;
@@ -19,7 +22,7 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub fn home() -> PathBuf {
-    std::env::var_os("HOME")
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
         .expect("HOME is required")
 }
@@ -29,6 +32,7 @@ pub fn now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+#[cfg(target_os = "macos")]
 pub fn home_str_npm() -> &'static str {
     static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     PATH.get_or_init(|| home().join(".npm").to_string_lossy().into_owned())
@@ -78,11 +82,21 @@ fn acquire(state: &Arc<AppState>) -> Result<BusyGuard, String> {
 }
 
 fn worker_priority(economy: bool) {
-    unsafe extern "C" {
-        fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
-    }
+    #[cfg(windows)]
     unsafe {
-        pthread_set_qos_class_self_np(if economy { 0x09 } else { 0x11 }, 0);
+        windows_sys::Win32::System::Threading::SetThreadPriority(
+            windows_sys::Win32::System::Threading::GetCurrentThread(),
+            if economy { -2 } else { -1 },
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
+        }
+        unsafe {
+            pthread_set_qos_class_self_np(if economy { 0x09 } else { 0x11 }, 0);
+        }
     }
 }
 
@@ -171,7 +185,20 @@ async fn start_scan(
         } else if mode == "directory" {
             let root = match root.as_deref() {
                 Some("home") => home(),
-                Some("disk") => PathBuf::from("/System/Volumes/Data"),
+                Some("disk") => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        PathBuf::from("/System/Volumes/Data")
+                    }
+                    #[cfg(windows)]
+                    {
+                        home()
+                            .ancestors()
+                            .last()
+                            .ok_or("invalid_directory")?
+                            .to_path_buf()
+                    }
+                }
                 Some(path) if Path::new(path).is_absolute() => PathBuf::from(path),
                 _ => return Err("invalid_directory".into()),
             };
@@ -305,6 +332,11 @@ fn reveal_path(path: String) -> Result<(), String> {
     if !Path::new(&path).is_absolute() {
         return Err("invalid_directory".into());
     }
+    #[cfg(windows)]
+    {
+        return windows::reveal(&path);
+    }
+    #[cfg(target_os = "macos")]
     std::process::Command::new("/usr/bin/open")
         .args(["-R", &path])
         .spawn()
@@ -314,22 +346,29 @@ fn reveal_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_permissions() -> Result<(), String> {
-    std::process::Command::new("/usr/bin/open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    open_external(if cfg!(windows) {
+        "ms-settings:privacy-broadfilesystemaccess"
+    } else {
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+    })
 }
 
 #[tauri::command]
 fn get_system_language() -> &'static str {
-    unsafe extern "C" {
-        fn macspace_system_is_chinese() -> i32;
+    #[cfg(windows)]
+    {
+        return windows::system_language();
     }
-    if unsafe { macspace_system_is_chinese() } == 1 {
-        "zh"
-    } else {
-        "en"
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn macspace_system_is_chinese() -> i32;
+        }
+        if unsafe { macspace_system_is_chinese() } == 1 {
+            "zh"
+        } else {
+            "en"
+        }
     }
 }
 
@@ -350,7 +389,7 @@ fn watch_caches(app: &tauri::AppHandle, state: &Arc<AppState>) {
                 let mut changed = state.changed.lock().unwrap_or_else(|e| e.into_inner());
                 let before = changed.len();
                 for rule in scanner::rules() {
-                    let root = home().join(rule.relative);
+                    let root = rule.path();
                     let relevant = match &event {
                         Ok(e) => {
                             !e.kind.is_access()
@@ -380,7 +419,7 @@ fn watch_caches(app: &tauri::AppHandle, state: &Arc<AppState>) {
     let mut paths = std::collections::HashSet::new();
     let mut watched = 0;
     for rule in scanner::rules() {
-        let path = home().join(rule.relative);
+        let path = rule.path();
         let existing = if path.is_dir() {
             path
         } else {
@@ -437,6 +476,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            power::get_power_status,
+            power::set_power_mode,
             get_metrics,
             get_snapshot,
             start_scan,
@@ -458,5 +499,20 @@ pub fn run() {
             updates::open_releases
         ])
         .run(tauri::generate_context!())
-        .expect("could not start MacSpace");
+        .expect("could not start System Balance");
+}
+
+pub fn open_external(url: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        windows::open_external(url)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }

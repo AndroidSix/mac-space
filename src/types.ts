@@ -6,6 +6,7 @@ export interface ProcessInfo {
   startTime: number;
   manageable: boolean;
   nice: number;
+  lowered: boolean;
 }
 export interface Metrics {
   cpu: number;
@@ -24,6 +25,8 @@ export interface Metrics {
   sampledAt: number;
   chip: string;
   os: string;
+  platform: string;
+  power: PowerStatus;
 }
 export interface Entry {
   id: string;
@@ -84,4 +87,10 @@ export interface BatchReport {
   cancelled: boolean;
   availableChange: number;
   persistenceError: string | null;
+}
+
+export interface PowerStatus {
+  current: string;
+  modes: { id: string; name: string }[];
+  requiresAdmin: boolean;
 }

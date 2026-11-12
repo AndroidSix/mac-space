@@ -27,7 +27,16 @@ let metrics: Metrics = {
   loadAverage: [1, 1, 1],
   sampledAt: 1,
   chip: 'Fixture Apple Silicon',
-  os: 'macOS fixture',
+  os: params.has('windows') ? 'Windows fixture' : 'macOS fixture',
+  platform: params.has('windows') ? 'windows' : 'macos',
+  power: {
+    current: 'auto',
+    modes: [
+      { id: 'auto', name: 'powerAuto' },
+      { id: 'low', name: 'powerLow' },
+    ],
+    requiresAdmin: !params.has('windows'),
+  },
 };
 
 Object.assign(window, {
@@ -45,6 +54,12 @@ Object.assign(window, {
           return callback;
         case 'get_snapshot':
           return { caches: [], cacheScannedAt: 0, directory: null, dirty: false };
+        case 'get_power_status':
+          return metrics.power;
+        case 'set_power_mode':
+          if (params.has('powerDenied')) throw 'power_denied';
+          metrics = { ...metrics, power: { ...metrics.power, current: String(args.id) } };
+          return metrics.power;
         case 'get_metrics':
           if (!paused) metrics = { ...metrics, sampledAt: Math.floor(Date.now() / 1000) };
           return metrics;
