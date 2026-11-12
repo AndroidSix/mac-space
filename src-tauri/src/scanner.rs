@@ -20,10 +20,10 @@ impl Rule {
     pub fn path(&self) -> PathBuf {
         #[cfg(windows)]
         {
-            return std::env::var_os("LOCALAPPDATA")
+            std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| crate::home().join("AppData/Local"))
-                .join(self.relative);
+                .join(self.relative)
         }
         #[cfg(target_os = "macos")]
         {

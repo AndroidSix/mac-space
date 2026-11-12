@@ -45,7 +45,7 @@ pub async fn save_update_token(value: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         {
-            return crate::windows::write_token(&value);
+            crate::windows::write_token(&value)
         }
         #[cfg(target_os = "macos")]
         {

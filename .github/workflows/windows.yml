@@ -23,7 +23,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          save-if: ${{ always() }}
+          cache-on-failure: true
       - run: npm ci
       - run: npm test
       - run: npm run test:native -- --release

@@ -334,7 +334,7 @@ fn reveal_path(path: String) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        return windows::reveal(&path);
+        windows::reveal(&path)
     }
     #[cfg(target_os = "macos")]
     std::process::Command::new("/usr/bin/open")
@@ -357,7 +357,7 @@ fn open_permissions() -> Result<(), String> {
 fn get_system_language() -> &'static str {
     #[cfg(windows)]
     {
-        return windows::system_language();
+        windows::system_language()
     }
     #[cfg(target_os = "macos")]
     {
