@@ -112,6 +112,10 @@ pub fn process_action(pid: u32, start: u64, action: &str) -> Result<(), String> 
         }
         match action {
             "lower" => {
+                let priority = unsafe { GetPriorityClass(handle) };
+                if priority == IDLE_PRIORITY_CLASS || priority == BELOW_NORMAL_PRIORITY_CLASS {
+                    return Ok(());
+                }
                 if unsafe { SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS) } == 0 {
                     Err("permission_denied".into())
                 } else {
@@ -161,8 +165,15 @@ pub fn open_file(path: &Path, delete: bool, pin: bool) -> io::Result<File> {
     let handle = unsafe {
         CreateFileW(
             wide(path).as_ptr(),
-            FILE_READ_ATTRIBUTES | if delete { DELETE } else { 0 },
-            FILE_SHARE_READ | FILE_SHARE_WRITE | if pin { 0 } else { FILE_SHARE_DELETE },
+            FILE_READ_ATTRIBUTES
+                | if pin { FILE_READ_DATA } else { 0 }
+                | if delete { DELETE } else { 0 },
+            FILE_SHARE_READ
+                | if pin {
+                    0
+                } else {
+                    FILE_SHARE_WRITE | FILE_SHARE_DELETE
+                },
             std::ptr::null(),
             OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -278,8 +289,11 @@ pub fn protect(bytes: &[u8], encrypt: bool) -> io::Result<Vec<u8>> {
     if result == 0 {
         return Err(io::Error::last_os_error());
     }
-    let value =
-        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
+    let value = if output.cbData == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec()
+    };
     unsafe {
         LocalFree(output.pbData.cast());
     }
@@ -300,12 +314,18 @@ pub fn read_token() -> String {
     {
         return String::new();
     }
-    let result = unsafe {
-        String::from_utf8_lossy(std::slice::from_raw_parts(
-            (*value).CredentialBlob,
-            (*value).CredentialBlobSize as usize,
-        ))
-        .into_owned()
+    let result = if value.is_null() {
+        return String::new();
+    } else if unsafe { (*value).CredentialBlobSize } == 0 {
+        String::new()
+    } else {
+        unsafe {
+            String::from_utf8_lossy(std::slice::from_raw_parts(
+                (*value).CredentialBlob,
+                (*value).CredentialBlobSize as usize,
+            ))
+            .into_owned()
+        }
     };
     unsafe {
         CredFree(value.cast());
