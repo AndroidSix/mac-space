@@ -550,12 +550,17 @@ mod tests {
         fs::write(root.join("cache/original"), vec![1_u8; 16384]).unwrap();
         fs::hard_link(root.join("cache/original"), root.join("cache/duplicate")).unwrap();
         let result = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/J"])
-            .arg(root.join("cache/link"))
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(root.join("cache").join("link"))
             .arg(root.join("outside"))
             .output()
             .unwrap();
-        assert!(result.status.success());
+        assert!(
+            result.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
         let scan =
             scan_directory(root.join("cache"), None, &AtomicBool::new(false), false).unwrap();
         assert_eq!(scan.files, 1);

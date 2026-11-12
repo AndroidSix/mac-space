@@ -40,19 +40,14 @@ pub fn reveal(path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 pub fn system_language() -> &'static str {
-    let mut locale = [0u16; 85];
-    let count = unsafe {
-        windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
-            locale.as_mut_ptr(),
-            locale.len() as i32,
-        )
-    };
-    if count > 0 && String::from_utf16_lossy(&locale[..count as usize]).starts_with("zh") {
+    let language = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    if language & 0x03ff == 0x04 {
         "zh"
     } else {
         "en"
     }
 }
+
 pub fn low_power() -> bool {
     let mut status = windows_sys::Win32::System::Power::SYSTEM_POWER_STATUS::default();
     unsafe {
@@ -380,12 +375,17 @@ mod tests {
         assert!(root.join("cache").is_dir());
         assert!(std::fs::rename(root.join("cache"), root.join("moved")).is_err());
         let result = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/J"])
-            .arg(root.join("cache/link"))
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(root.join("cache").join("link"))
             .arg(root.join("outside"))
             .output()
             .unwrap();
-        assert!(result.status.success());
+        assert!(
+            result.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
         assert!(pin_directory(&root.join("cache/link")).is_err());
         assert!(clear_directory(&root.join("cache"), volume).is_err());
         assert_eq!(std::fs::read(root.join("outside/keep")).unwrap(), b"data");
