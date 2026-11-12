@@ -196,10 +196,17 @@ mod windows {
 use windows::{apply, read};
 
 #[tauri::command]
-pub async fn get_power_status() -> Result<PowerStatus, String> {
-    tauri::async_runtime::spawn_blocking(read)
-        .await
-        .map_err(|_| "power_unavailable".to_string())?
+pub async fn get_power_status(
+    state: tauri::State<'_, std::sync::Arc<crate::AppState>>,
+) -> Result<PowerStatus, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = read()?;
+        publish_status(&state, &status)?;
+        Ok(status)
+    })
+    .await
+    .map_err(|_| "power_unavailable".to_string())?
 }
 
 #[tauri::command]
@@ -213,23 +220,43 @@ pub async fn set_power_mode(
             return Err("invalid_action".into());
         }
         apply(&id)?;
-        let status = read()?;
+        let mut status = read()?;
+        for _ in 0..8 {
+            if status.current == id {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            status = read()?;
+        }
+        publish_status(&state, &status)?;
         if status.current != id {
             return Err("power_not_applied".into());
         }
-        {
-            let mut monitor = state.monitor.lock().map_err(|_| "state_error")?;
-            monitor.last.power = monitor.power.status(true);
-        }
-        state.api.publish(&state);
         Ok(status)
     })
     .await
     .map_err(|_| "power_unavailable".to_string())?
 }
 
+fn publish_status(state: &crate::AppState, status: &PowerStatus) -> Result<(), String> {
+    {
+        let mut monitor = state.monitor.lock().map_err(|_| "state_error")?;
+        monitor.power.last = status.clone();
+        monitor.power.refreshed = Some(Instant::now());
+        monitor.last.power = status.clone();
+    }
+    state.api.publish(state);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn active_windows_power_plan_is_available() {
+        let status = super::read().unwrap();
+        assert!(status.modes.iter().any(|mode| mode.id == status.current));
+    }
     #[test]
     fn invalid_power_mode_is_rejected_without_changing_system() {
         assert!(super::apply("arbitrary;command").is_err());

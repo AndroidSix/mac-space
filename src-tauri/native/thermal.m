@@ -53,10 +53,16 @@ int macspace_github_token_write(const char *token) {
 
 int systembalance_set_low_power(int low) {
     if (low != 0 && low != 1) return -1;
-    NSString *source = [NSString stringWithFormat:
-        @"do shell script \"/usr/bin/pmset -a lowpowermode %d\" with administrator privileges", low];
-    NSDictionary *error = nil;
-    NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
-    [script executeAndReturnError:&error];
-    return error ? [error[NSAppleScriptErrorNumber] intValue] : 0;
+    __block int result = -1;
+    void (^change)(void) = ^{
+        NSString *source = [NSString stringWithFormat:
+            @"do shell script \"/usr/bin/pmset -a lowpowermode %d\" with administrator privileges", low];
+        NSDictionary *error = nil;
+        NSAppleScript *script = [[NSAppleScript alloc] initWithSource:source];
+        [script executeAndReturnError:&error];
+        result = error ? [error[NSAppleScriptErrorNumber] intValue] : 0;
+    };
+    if ([NSThread isMainThread]) change();
+    else dispatch_sync(dispatch_get_main_queue(), change);
+    return result;
 }

@@ -19,7 +19,7 @@ let metrics: Metrics = {
   swapUsed: 0,
   diskTotal: 500e9,
   diskAvailable: 70e9,
-  thermalState: 0,
+  thermalState: params.has('windows') ? -1 : 0,
   lowPower: false,
   sensors: [{ name: 'Fixture sensor', celsius: 48 }],
   processes: [],

@@ -1763,6 +1763,7 @@ dialog.smart-dialog {
 }
 
 .power-panel {
+  padding: 24px;
   margin-bottom: 22px;
 }
 .power-panel h2 {

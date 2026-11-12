@@ -140,6 +140,7 @@ impl Monitor {
                             | "tccd"
                             | "securityd"
                     );
+                let nice = priority(pid.as_u32());
                 ProcessInfo {
                     pid: pid.as_u32(),
                     name,
@@ -147,8 +148,8 @@ impl Monitor {
                     memory: p.memory(),
                     start_time: p.start_time(),
                     manageable,
-                    nice: priority(pid.as_u32()),
-                    lowered: priority(pid.as_u32()) >= 10,
+                    nice,
+                    lowered: nice >= 10,
                 }
             })
             .collect();
