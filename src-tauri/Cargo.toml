@@ -3,6 +3,8 @@ name = "system-balance"
 version = "0.4.0"
 edition = "2024"
 description = "A local-first disk, workload and power manager"
+license = "MIT"
+repository = "https://github.com/AndroidSix/mac-space"
 
 [lib]
 name = "system_balance_lib"

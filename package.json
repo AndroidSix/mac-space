@@ -1,7 +1,17 @@
 {
   "name": "system-balance",
   "version": "0.4.0",
-  "private": true,
+  "private": false,
+  "license": "MIT",
+  "description": "System Balance · Local disk, workload and power management for macOS and Windows",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndroidSix/mac-space.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AndroidSix/mac-space/issues"
+  },
+  "homepage": "https://github.com/AndroidSix/mac-space#readme",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",

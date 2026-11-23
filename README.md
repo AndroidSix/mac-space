@@ -1,8 +1,14 @@
 # 清衡 · System Balance
 
-创建于 2026-11-11 · 更新于 2026-11-12
+创建于 2026-11-11 · 更新于 2026-03-22
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/AndroidSix/mac-space)](https://github.com/AndroidSix/mac-space/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue)](https://github.com/AndroidSix/mac-space)
 
 面向 macOS 与 Windows 的本机磁盘、负载与电源管理工具，使用 Tauri 2、Rust 和 Svelte 5。当前版本 **0.4.0**，原名 MacSpace。默认跟随系统语言，支持简体中文与 English，包含原生菜单和确认弹窗。
+
+本仓库以 **MIT** 许可证开源。欢迎报告问题、提交改进，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 安装与使用
 
@@ -59,3 +65,13 @@ npm run package:pkg
 隔离界面测试：运行 `npm run dev`，访问 `/tests/smart-cleanup.html` 或 `/tests/integrations.html`。后者支持 `?language=en`、`?windows=1`、`?powerDenied=1`、`?portBusy=1` 与 `?authError=1`。使用模拟数据和命令，不访问机器信息、凭据或真实缓存，不启动实际接口、不更改系统电源状态，不包含在正式构建中。
 
 发布包未使用商业签名证书：macOS 应用为 ad-hoc 签名，PKG 未签名且未公证；Windows 安装器未做 Authenticode 签名。Gatekeeper／SmartScreen 可能提示来源。源码仓库不含工具链、依赖、扫描数据和编译产物，交付应用不依赖 Node 或 Rust。
+
+## 参与贡献
+
+- 行为异常、构建问题：开 [Issue](https://github.com/AndroidSix/mac-space/issues)
+- 代码与文档改进：先读 [CONTRIBUTING.md](CONTRIBUTING.md)
+- 安全相关：按 [SECURITY.md](SECURITY.md) 私下报告
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源。
